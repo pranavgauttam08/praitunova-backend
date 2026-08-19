@@ -1,0 +1,24 @@
+# Render configuration for Django backend
+services:
+  - type: web
+    name: praitunova-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com,localhost,127.0.0.1"
+      - key: EMAIL_BACKEND
+        value: "django.core.mail.backends.smtp.EmailBackend"
+      - key: EMAIL_HOST_USER
+        value: "pgkijai301@gmail.com"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    databases:
+      - name: praitunova-db
+        databaseName: praitunova
+        user: praitunova
