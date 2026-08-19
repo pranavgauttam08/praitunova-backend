@@ -1,0 +1,9 @@
+from django.contrib import admin
+from .models import Inquiry
+
+@admin.register(Inquiry)
+class InquiryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'email', 'service', 'status', 'created_at')
+    list_filter = ('status', 'service', 'created_at')
+    search_fields = ('name', 'email', 'company')
+    readonly_fields = ('created_at',)
