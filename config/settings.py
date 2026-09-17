@@ -9,9 +9,33 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ── Security ───────────────────────────────────────────────────────────────
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-ws7^^2q-o6pf=4j8r=i(l$4jan*o$833i45lm%u3*bggz3&@b(')
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        # Local-dev-only fallback. Never used in production because DEBUG
+        # defaults to False and Render always sets SECRET_KEY explicitly.
+        SECRET_KEY = 'django-insecure-local-dev-only-do-not-deploy'
+    else:
+        raise RuntimeError(
+            'SECRET_KEY environment variable is not set. Refusing to start '
+            'with DEBUG=False and no secret key.'
+        )
+
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+if not DEBUG:
+    # Render terminates TLS at its proxy and forwards plain HTTP, so Django
+    # needs to trust the X-Forwarded-Proto header to know a request was
+    # actually HTTPS (otherwise SECURE_SSL_REDIRECT loops forever).
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 # ── Installed Apps ─────────────────────────────────────────────────────────
 INSTALLED_APPS = [
@@ -91,10 +115,13 @@ EMAIL_BACKEND     = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.c
 EMAIL_HOST        = 'smtp.gmail.com'
 EMAIL_PORT        = 587
 EMAIL_USE_TLS     = True
-EMAIL_HOST_USER   = os.environ.get('EMAIL_HOST_USER', 'pgkijai301@gmail.com')
+EMAIL_HOST_USER   = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL  = f'Praitunova Infotech <{EMAIL_HOST_USER}>'
-ADMIN_NOTIFICATION_EMAIL = 'pgkijai301@gmail.com'
+ADMIN_NOTIFICATION_EMAIL = os.environ.get('ADMIN_NOTIFICATION_EMAIL', EMAIL_HOST_USER)
+
+# Public base URL of this backend — used to build links in outgoing emails.
+SITE_URL = os.environ.get('SITE_URL', 'http://127.0.0.1:8000')
 
 # ── CORS ───────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = os.environ.get(
@@ -105,15 +132,72 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG   # only allow all in local dev
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ── Logging ────────────────────────────────────────────────────────────────
+# Django's own default logging config silences everything once DEBUG=False
+# unless ADMINS is set (it isn't here), which means server errors currently
+# vanish without a trace in production. Render captures stdout/stderr as
+# logs, so send everything there instead — that's the only "monitoring"
+# a deploy like this needs.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} — {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+}
+
 # ── Django REST Framework ──────────────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    # The browsable HTML API is dev-only: in production it's just an
+    # unnecessary surface that renders API structure/forms to anyone who
+    # opens an endpoint in a browser. JSON-only in prod, both while DEBUG.
+    'DEFAULT_RENDERER_CLASSES': (
+        ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer']
+        if DEBUG else ['rest_framework.renderers.JSONRenderer']
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 25,
+    # Scoped throttles keep the public contact form, the admin login
+    # endpoint, and everything else on independent per-IP budgets so a
+    # burst on one endpoint can never starve out the others.
     'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '20/day',
+        'contact': '10/hour',
+        'login': '10/hour',
     }
 }

@@ -4,8 +4,15 @@ from rest_framework.permissions import IsAdminUser, AllowAny
 from django.core.mail import send_mail
 from django.conf import settings
 from django.db.models import Count
+from django.http import JsonResponse
 from .models import Inquiry
 from .serializers import InquirySerializer, InquiryAdminSerializer
+
+
+def healthz(request):
+    """Trivial liveness endpoint — used by the keep-alive ping to stop the
+    free-tier instance from idling out and cold-starting on real visitors."""
+    return JsonResponse({'status': 'ok'})
 
 
 class InquiryCreateView(generics.CreateAPIView):
@@ -13,10 +20,25 @@ class InquiryCreateView(generics.CreateAPIView):
     queryset = Inquiry.objects.all()
     serializer_class = InquirySerializer
     permission_classes = [AllowAny]
+    throttle_scope = 'contact'
 
     def perform_create(self, serializer):
+        # Honeypot: a real browser never fills this hidden field in, so any
+        # non-empty value means a bot filled the form out. Pretend to
+        # succeed (so the bot doesn't adapt) but don't save or email.
+        if serializer.validated_data.pop('website', ''):
+            self._honeypot_tripped = True
+            return
+        self._honeypot_tripped = False
         inquiry = serializer.save()
         self._send_notification_email(inquiry)
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if getattr(self, '_honeypot_tripped', False):
+            # Report success without leaking that it was silently dropped.
+            return Response({'id': None}, status=status.HTTP_201_CREATED)
+        return response
 
     def _send_notification_email(self, inquiry):
         subject = f"🔔 New Inquiry: {inquiry.name} — {inquiry.service or 'General'}"
@@ -33,7 +55,7 @@ class InquiryCreateView(generics.CreateAPIView):
             f"Message:\n{inquiry.message}\n\n"
             f"{'='*55}\n"
             f"Submitted: {inquiry.created_at.strftime('%d %b %Y, %I:%M %p UTC')}\n"
-            f"Admin: http://127.0.0.1:8000/admin/inquiries/inquiry/{inquiry.id}/change/\n"
+            f"Admin: {settings.SITE_URL}/admin/inquiries/inquiry/{inquiry.id}/change/\n"
         )
         try:
             send_mail(
@@ -49,7 +71,7 @@ class InquiryCreateView(generics.CreateAPIView):
 
 
 class InquiryListView(generics.ListAPIView):
-    """Protected admin endpoint — lists all inquiries."""
+    """Protected admin endpoint — lists all inquiries (paginated)."""
     queryset = Inquiry.objects.all().order_by('-created_at')
     serializer_class = InquiryAdminSerializer
     permission_classes = [IsAdminUser]

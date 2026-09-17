@@ -14,10 +14,18 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+import os
+
 from django.contrib import admin
 from django.urls import path, include
 
+# Configurable so the admin login isn't sitting at the one path every
+# credential-stuffing bot scans by default. Unset -> unchanged 'admin/'.
+ADMIN_URL_PATH = os.environ.get('ADMIN_URL_PATH', 'admin/').lstrip('/')
+if not ADMIN_URL_PATH.endswith('/'):
+    ADMIN_URL_PATH += '/'
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path(ADMIN_URL_PATH, admin.site.urls),
     path('api/', include('inquiries.urls')),
 ]
